@@ -14,7 +14,8 @@ public interface IPhone {
      * @auther: lixiaotian
      * @date: 2019/11/2 18:11
      */
-    public void call(String phoneNum);
+    void call(String phoneNum);
+
     /**
      *
      * @Description:接电话
@@ -23,5 +24,5 @@ public interface IPhone {
      * @auther: lixiaotian
      * @date: 2019/11/2 18:11
      */
-    public void answerCall(String phoneNum);
+    void answerCall(String phoneNum);
 }

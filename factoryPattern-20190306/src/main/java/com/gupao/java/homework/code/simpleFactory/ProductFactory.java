@@ -8,7 +8,7 @@ import com.gupao.java.homework.code.IPhone;
  * @Date: 2019/11/2 18:32
  * @Description:手机创建工厂
  */
-public class PhoneFactory {
+public class ProductFactory {
     /**
      *
      * @Description:手机创建方法
@@ -17,7 +17,7 @@ public class PhoneFactory {
      * @auther: lixiaotian
      * @date: 2019/11/2 18:46
      */
-    public IPhone createPhone(Class<? extends IPhone> clazz) {
+    public static IPhone createPhone(Class<? extends IPhone> clazz) {
         if (null != clazz) {
             try {
                 return clazz.newInstance();
@@ -36,7 +36,7 @@ public class PhoneFactory {
      * @auther: lixiaotian
      * @date: 2019/11/2 18:47
      */
-    public IComputer createComputer(Class<? extends IComputer> clazz) {
+    public static IComputer createComputer(Class<? extends IComputer> clazz) {
         if (null != clazz) {
             try {
                 return clazz.newInstance();

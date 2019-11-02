@@ -14,5 +14,5 @@ public interface IComputer {
      * @auther: lixiaotian
      * @date: 2019/11/2 18:17
      */
-    public void program();
+    void program();
 }
