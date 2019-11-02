@@ -1,7 +1,7 @@
 package com.gupao.java.jdbc;
 
-import com.gupao.java.jdbcDemo.Student;
-import com.gupao.java.jdbcDemo.version01.JDBC;
+import com.gupao.java.classcode.jdbcDemo.Student;
+import com.gupao.java.classcode.jdbcDemo.version01.JDBC;
 import org.junit.Test;
 
 import static org.junit.Assert.assertTrue;
