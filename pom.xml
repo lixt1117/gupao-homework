@@ -9,7 +9,7 @@
   <packaging>pom</packaging>
   <version>1.0-SNAPSHOT</version>
   <modules>
-    <module>homework-20190306</module>
+    <module>factoryPattern-20190306</module>
   </modules>
 
   <name>gupao-homework</name>
