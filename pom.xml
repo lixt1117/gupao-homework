@@ -10,7 +10,7 @@
   <version>1.0-SNAPSHOT</version>
   <modules>
     <module>factoryPattern-20190306</module>
-      <module>springcore-20191215</module>
+      <module>springcore-20190324</module>
   </modules>
 
   <name>gupao-homework</name>
