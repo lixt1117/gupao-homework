@@ -5,16 +5,10 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.gupao.java</groupId>
-  <artifactId>gupao-homework</artifactId>
-  <packaging>pom</packaging>
+  <artifactId>springcore-20190327</artifactId>
   <version>1.0-SNAPSHOT</version>
-  <modules>
-    <module>factoryPattern-20190306</module>
-      <module>springcore-20190324</module>
-    <module>springcore-20190327</module>
-  </modules>
 
-  <name>gupao-homework</name>
+  <name>springcore-20190327</name>
   <!-- FIXME change it to the project's website -->
   <url>http://www.example.com</url>
 
