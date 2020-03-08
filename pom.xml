@@ -13,6 +13,7 @@
       <module>springcore-20190324</module>
     <module>springcore-20190327</module>
       <module>springcore-20190330</module>
+      <module>springAOP</module>
   </modules>
 
   <name>gupao-homework</name>
