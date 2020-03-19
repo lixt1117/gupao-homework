@@ -78,4 +78,10 @@ public class ProductFactory {
         return STOP_CONSUMER;
     }
 
+    public static void main(String[] args) {
+        Integer a = 0;
+        System.out.println(a.hashCode());
+        a++;
+        System.out.println(a.hashCode());
+    }
 }
