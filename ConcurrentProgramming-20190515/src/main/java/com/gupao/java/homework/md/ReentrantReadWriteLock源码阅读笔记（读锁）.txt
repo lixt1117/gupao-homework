@@ -1,0 +1,74 @@
+读锁加锁：
+1.读锁加锁调用ReentrantReadWriteLock内部类ReadLock的lock方法，改方法实际调用AbstractQueuedSynchronizer
+的acquireShared方法
+2.acquireShared方法中：
+	（1）首先会调用ReentrantReadWriteLock内部类Sync的tryAcquireShared方法
+		a.在tryAcquireShared方法中：
+			一.首先调用ReentrantReadWriteLock类的exclusiveCount判断读写锁的写锁状态state是否等于0
+			二.如果不等于0，再判断当前线程是否是持有写锁的线程，如果不是，方法返回-1
+			三.如果state等于0或者当前线程已经获得了锁，那么便要获取读锁的state。
+				这里说明下，ReentrantReadWriteLock虽然分读锁和写锁，但是它的锁状态state只有一个。
+				他是通过把state搞16位当作读锁，低16位当作写锁了来操作的。
+			四.拿到读锁状态后，先调用AQS的apparentlyFirstQueuedIsExclusive方法来判断是否需要读加锁，该方法
+				获取同步队列的head节点和head的next节点，除了一些基本的非空判断外，主要看next节点的锁的模式是
+				不是shared（共享）
+				1).如果不是共享，则调用ReentrantReadWriteLock类的fullTryAcquireShared方法，这里后面再细说。
+				2).如果是共享，判断读锁state是不是超过最大值，如果超过了，同样调fullTryAcquireShared方法。
+				3).如果没超过，则调用AQS的compareAndSetState方法，cas的将读锁state+1。如果更新失败，同样调
+					fullTryAcquireS	hared方法。
+				4).更新成功的话，判断之前的读锁状态：
+					I.state等于0，说明没有线程拿到读锁，将当前线程设置成第一个读线程。
+					II.如果不等于0，判断第一个读线程是不是当前线程，如果是将第一个线程的持有锁次数+1
+					III.如果不等于0且第一个也不是当前线程，利用ThreadLocal，存储下每个线程的持有次数
+				最后方法返回1	
+			五.这里最后分析下上面出现调用的fullTryAcquireShared方法，该方法主要通过自旋来实现上面tryAcquireShared
+				的逻辑，该方法是一个自旋。其内部逻辑就是针对上面那几种会调用到fullTryAcquireShared方法的情况进行
+				处理。我们先来列一下能走到fullTryAcquireShared方法里面的都有哪些情况：
+					1).readerShouldBlock()返回true，也就读操作需要加锁的情况
+					2). r >= MAX_COUNT，读锁的重入计数达到上限
+					3).compareAndSetState返回false，表示cas更新锁state失败，表示有线程竞争
+				那么，在fullTryAcquireShared方法里的处理如下：
+					1).判断是否有线程获取了写锁并且不是当前线程，如果出现此情况，返回-1
+					2).如果上一步条件不满足，接着判断是否要对读加锁，如果需要则判断当期线程是否持有了读锁
+					3).如果没有持有锁，返回-1
+					4).接下来判断读锁的加锁数量是否超过最大值，超过的话抛出异常
+					5).最后进行cas更新锁的状态进行加锁，如果成功则进行最后的一些数据落地，返回1。如果失败则继续自旋
+					由于上面几步都是在自旋里，所以该方法要么返回1要么返回-1
+	（2）接下来根据tryAcquireShared方法的返回值，如果返回1表示加锁成功。如果返回-1，则调用AQS的doAcquireShared方法，
+	    这个和前面讲重入锁的时候的acquireQueued方法类似，就是一个自旋加锁，加锁失败讲线程放入同步队列最后挂起线程的的过程
+
+================================================================================================================
+
+读锁解锁：
+1.读锁解锁调用的ReentrantReadWriteLock的unLock方法,该方法调用了AQS的releaseShared方法
+2.releaseShared方法中：
+	（1）首先调用了内部类Sync的tryReleaseShared方法，在该方法中：
+		a.首先会去判断Sync的firstReader是否是当前线程，firstReader是第一个获得读锁的线程。如果是且锁的重入次数位1，则把
+			firstReader清空设置为null
+			PS：我理解的firstReader应该是起到一个缓存作用，因为共享模式下，读写锁是允许多个线程同时去读的。而这些线程
+			各自的锁的状态和次数都是存在ThreadLocal里，频繁的读取ThreadLocal性能并不好，这里就缓存了第一个线程的信息。
+			使得无竞争的情况下，单个线程的加锁解锁会比较快，有点类似偏向锁的思想。
+		b.如果firstReader不是当前线程，就去从从另一个缓存cachedHoldCounter里去取线程ID，再去判断这个缓存里的线程
+			是不是当前线程，如果不是再去ThreadLocal去。总之这里得到的是一个HoldCounter对象，这个对象里存储了线程ID和线程
+			加锁的次数count。这里就会对当前线程的count减1
+		C.最后，进入一个自旋，cas的方式对ASQ的state的高16位也就是读锁state进行-1更新，知道成功，返回更新后的锁状态nextc是不是等于0
+	（2）根据上一步返回的结果，如果不等于0，那么解锁结束，线程继续执行
+	（3）如果等于0，说明读锁都释放完了。需要唤醒线程，这里调用了AQS的doReleaseShared方法
+	（4）在doReleaseShared方法中，它就是一个自旋，做着以下的事情：
+		a.获取队列的head节点，并判断该节点的waitstatus
+		b.如果waitStatus等于SIGNAL，则讲head节点的状态cas更新成0并调用AQS的unparkSuccessor方法唤醒队列中下一个需要被唤醒
+			的线程。关于unparkSuccessor，前面讲重入锁的时候已经分析过，这里不赘述。
+		c.如果waitStatus等于0就把head的等待状态改为PROPAGATE无条件传播
+
+
+
+
+
+
+
+
+
+
+
+
+			
