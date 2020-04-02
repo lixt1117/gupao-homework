@@ -1,0 +1,28 @@
+加锁部分：
+1.ReentrantReadWriteLock的写锁的加锁是调用其内部类WriteLock的lock方法，实际就是调用AbstractQueuedSynchronizer的acquire方法。
+2.在acquire方法中：
+	（1）首先判断锁的计数状态state是不是等于0，
+			a.如果不等于0，则依次进行一下操作：
+				I.如果写锁的计数等于0或者当前线程未获得写锁，则acquire方法返回false
+				II.如果写锁重入计数超过最大值则抛出异常
+				III.如果都不是，则只有一种情况，就是当前线程获得了写锁且这次又来获取锁，那么就把写锁state加一，
+					返回true
+			b.如果等于0，则调用writerShouldBlock方法判断写操作是否需要阻塞，因为这里是默认非公平锁，所以还需要去竞争一下，
+			    不需要立即阻塞，writerShouldBlock返回false（如果是公平锁则acquire返回false）
+			c.接着AQS的compareAndSetState将写锁state+1，如果个更新失败，则返回false
+			d.锁+1成功后讲独占锁的owner线程改为当前线程，返回true
+    （2）根据上一步返回，如果是true说明加锁成功，加锁结束线程继续执行，如果返回false，则调用AQS的addWaiter方法，
+        将当前节点封装成Node对象加入到同步队列中，该方法之前看重入锁的时候已经讲过，这里就不赘述了
+    （3）封装完Node后，调用AQS的acquireQueued方法，进行自旋的尝试竞争锁或者挂起线程，该方法也在前面讲重入锁的时候说过，这里也不赘述了
+
+================================================================================================================
+
+解锁部分：
+1.ReentrantReadWriteLock的写锁的解锁是调用其内部类WriteLock的unLock方法,该方法实际也是调用AQS的release方法，在release
+方法中：
+	(1)首先调用内部类Sync的tryRelease方法，在该方法中：
+		a.首先判断当前线程是否是持有写锁的线程，不是的话抛出异常
+		b.判断写锁的cout减去1之后是否等于0，如果等于则讲锁持有线程清空为null，方法返回true
+		c.不等于0返回false
+	（2）根据上一步结果，如果为false，则解锁结束，线程继续
+	（3）如果返回true，则调用AQS的unparkSuccessor方法唤醒后面挂起的线程，因为之前已经说过，也不赘述了

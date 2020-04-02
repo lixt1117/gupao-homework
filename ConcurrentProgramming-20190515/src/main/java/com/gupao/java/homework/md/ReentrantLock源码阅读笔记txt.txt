@@ -1,0 +1,103 @@
+加锁部分：
+
+1.首先需要构造一个重入锁，调用new ReentrantLock()，改方法默认返回一个非公平锁NonfairSync类
+
+2.调用lock方法，该方法实际调用了NonfairSync的lock方法，该方法实际上先调用AbstractQueuedSynchronizer类的compareAndSetState，即通过cas原子操作去更新AQS（AbstractQueuedSynchronizer）里的同步状态state。
+如果更新成功那么表示当前线程获得了锁。那么就调用AbstractOwnableSynchronizer类的setExclusiveOwnerThread方法将当前线程设置成持有锁的线程，加锁到这里就结束了
+
+3.而如果cas更新失败，说明已经有线程持有了锁。由于前面cas更新state时state的期望值写死为0，也就是无锁状态。所以这里持有锁的线程可能是其他线程也可能是当前线程自己。
+接下来会调用AbstractQueuedSynchronizer的acquire方法，
+	该方法首先调用NonfairSync类的tryAcquire方法。
+		一、tryAcquire方法具体逻辑在Sync类的nonfairTryAcquire方法中：
+			1.判断当前锁的状态state
+			2.如果state=0，说明此时是无锁状态。那么再进行一次cas操作去更新state。如果成功则将当前线程设置成持有锁的线程并返回
+			  true，如果失败则返回false。
+			3.如果state!=0,说明锁还没有被释放，这里先判断一下持有锁的线程是不是自己，如果是则state+1，返回true，否则返回false
+		二、根据上一步调用tryAcquire方法的结果，如果成功获取锁那么方法到此结束；
+		如果获取失败，则：
+			1.首先调用AQS的addWaiter方法将当前线程封装成一个Node对象并插入双向链表组成的等待队列中。
+			  在addWaiter方法中：
+			  	（1）将当前线程封装成一个Node对象
+			  	（2）判断队列的tail是否为null，如果不是则将新建的Node的pre指向尾节点，再通过cas将tail更新成新的Node。
+			  		如果更新成功则将原来的tail节点的next指向新的Node。
+			  		如果tail为null或者cas更新tail失败的话，会调用AQS的enq方法
+			  	（3）enq内部是一个自旋，它循环做了一下事情：
+			  		a.如果tail为null，说明队列现在是个空的，需要初始化，新建一个空Node，把它设置成head和tail
+			  		b.如果tail不为空，那应该是之前cas更新tail失败，说明有别的线程先一步加入了队列，这里就会
+			  		  循环cas更新tail直至成功
+			2.接着调用AQS的acquireQueued方法，参数就是之前addWaiter方法返回的封装了当前线程的Node。
+			  在acquireQueued方法中自旋做着以下事情：
+			  	（1）首先获取当前线程Node的pre节点，判断pre是否是head节点
+			  	（2）如果是head节点，则再次调用NonfairSync的tryAcquire方法尝试获取锁。
+			  		如果成功，将当前Node设置成Head，并将原来的head设置成null（为了GC）
+					同时结束自旋
+			  	（3）如果不是head节点或者尝试获取锁失败，则调用AQS的shouldParkAfterFailedAcquire方法。
+					shouldParkAfterFailedAcquire的参数分别是当前线程的node和它的pre节点
+					在shouldParkAfterFailedAcquire方法中：
+						a.首先会会去判断pre节点的waitStatus，这是一个节点的等待状态。
+						一共有以下的几种值：
+							CANCELLED(1)：表示当前结点已取消调度。当timeout或被中断（响应中断的情况下），会触发变更为此状态，进入该状态后的结点将不会再变化。
+							SIGNAL(-1)：表示后继结点在等待当前结点唤醒。后继结点入队时，会将前继结点的状态更新为SIGNAL。
+							CONDITION(-2)：表示结点等待在Condition上，当其他线程调用了Condition的signal()方法后，CONDITION状态的结点将从等待队列转移到同步队列中，等待获取同步锁。
+							PROPAGATE(-3)：共享模式下，前继结点不仅会唤醒其后继结点，同时也可能会唤醒后继的后继结点。
+
+							0：新结点入队时的默认状态。
+							注意，负值表示结点处于有效等待状态，而正值表示结点已被取消。所以源码中很多地方用>0、<0来判断结点的状态是否正常
+						b.如果waitStatus为SIGNAL，则可以放心的挂起当前线程。返回true
+							如果waitStatus>0,也就是CANCELLED，就会循环的将pre节点从队列里断开，获取pre节点的前一个节点，直到waitStatus不大于0。最后再返回false，也就是不需要挂起。
+							如果waitStatus不符合上面两种情况，那么它要么是0要么是-3。这里都会通过cas操作把waitstatus更新成SIGNAL。（这里不是太懂为啥-3也要更新成SIGNAL，主要还是没清楚PROPAGATE(-3)的意思）
+							PS：因为该部分是自旋调用，所以可以看成这里从队列尾部遍历那些waitstatus大于0
+							的节点，把他们从队列里剔除。
+							至于为什么要从尾部开始遍历，我结合老师讲的以及自己的理解，如下：
+							一个线程节点加入AQS队列基本分为三步，
+							1.当前节点的pre设置成原先的tail
+							2.通过cas将当前节点替换为tail
+							3.将原先的tail节点的next指向当前节点
+							所以，对于新加入的节点，它的pre一定是最先设置好的，因此从尾部遍历，
+							是最有可能优先遍历到整个队列的。毕竟，这三部中，只有第二步是原子操作，
+							第一步和第三部都有可能中间有其他线程释放锁或者请求锁。
+				（4）如果shouldParkAfterFailedAcquire返回false，说明不需要挂起，那么加锁就这么结束了。
+					如果为true，说明需要挂起。
+				（5）需要挂起的话会调用AQS的parkAndCheckInterrupt方法，该方法首先会调用 LockSupport.park
+					挂起当前线程。到此，线程由于抢锁失败进入阻塞，线程的Node也进入了同步队列等待唤醒。
+					
+				（6）如果当前线程从阻塞状态被唤醒，则继续执行LockSupport.park下面的代码。
+					接下来会调用Thread.interrupted();返回当前线程的中端标志并复位它
+				（7）如果上一步返回的终端标志表示线程被其他线程中端过，则调用AQS的selfInterrupt
+					方法，该方法其实就是调用了当前线程的interrupt方法再一次设置了中端标志。
+					PS:这里上课的时候很多人不理解为什么要手动中断一次，我当时也是似懂非懂。后来查了一些资料以及自己测试了一下LockSupport.park后。有了自己的理解：
+					首先，手动中断的原因就在于LockSupport.park方法的特殊之处，它虽然是一个阻塞方法。
+					但是它和wait、sleep不一样，使用该方法挂起的线程不会抛出InterruptedException中断
+					异常。但是LockSupport.park仍然会对中断做出响应，它遇到中断会唤醒线程继续执行。这里
+					不想wait之类的可以让开发人员自定义中断的步骤。可以说，LockSupport.park遇到中断
+					反而会唤醒线程继续执行。
+					所以，当线程被唤醒继续执行时，我们无法分辨此次唤醒是因为锁被释放了导致当前线程获得
+					锁才被唤醒还是被中断唤醒的。
+					因此，才需要判断一下中断状态，为了使这种模式下的线程能够正常使用中断的功能，需要
+					重置中断标志并手动再次中断。
+					PS：经测试，LockSupport.park和wait等不同，wait和sleep如果你在进入阻塞之前中断过，
+					然后又复位了，也就是说发生了ABA的情况，LockSupport.park居然可以检测到并响应中断。
+					而wait和sleep就不行。也不知道是怎么做到的，这个以后再看，顺带提一句，有空去看看
+					这些挂起线程的方法其操作系统并底层的实现区别，应该是不同的。
+					
+=====================================================================================================
+解锁部分：
+
+1.调用unlock方法，实际上就是调用AQS的release方法。该方法首先调用ReentrantLock类下的tryRelease方法尝试
+解锁，如果成功就往下走，如果失败返回false
+2.对于tryRelease方法：
+	（1）该方法只允许持有锁的线程调用不然直接抛异常
+	（2）将锁的重入次数state-1，如果结果等于0，返回true，并将锁的归属线程设为null。
+	（3）如果结果不等于0，说明该线程重入了多次，还需要再次释放锁，更新state并返回false
+	（4）如果上一步返回true，获取AQS队列的head，如果head不为null且waitstatus不为0，就会唤起线程。
+	（5）唤起线程调用的是AQS的unparkSuccessor方法，该方法中：
+		a.首先判断当前线程的waitStatus是否小于0，如果是则cas更新为0
+		b.获取当前node的next节点，如果它不为null且它的waitstatus不大于0，调用LockSupport.unpark
+			唤起线程
+		c.如果next为null或者s.waitStatus > 0，从尾部遍历队列找到一个waitstatus<=0的，进行唤醒
+至此，解锁部分结束。
+
+PS：研究解锁部分时，我发现这里的代码出奇的简单，并没有我预想的会对队列进行操作，将释放锁的线程从队列里剔除。
+可以看出当解锁方法完成后，已经释放锁的线程仍然是head节点，还处在队列中，我带着疑问又看了一遍加锁的代码，
+发现原来是在加锁部分的shouldParkAfterFailedAcquire方法对队列进行清理。至于为什么要这么做，我猜测是为了尽量
+使得锁的释放变得快速且可靠？
