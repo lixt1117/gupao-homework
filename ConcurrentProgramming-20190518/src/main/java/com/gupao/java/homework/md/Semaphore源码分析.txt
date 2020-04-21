@@ -1,0 +1,8 @@
+Semaphore源码分析
+=============================================================================================
+semaphore.acquire:
+
+semaphore.acquire是调用的AQS的acquireSharedInterruptibly方法，该法和在countDownLatch源码分析时说的基本
+一致，就不赘述了。
+
+semaphore.release()也是一样，基本参考countDownLatch.countDown或者读写锁读锁的释放

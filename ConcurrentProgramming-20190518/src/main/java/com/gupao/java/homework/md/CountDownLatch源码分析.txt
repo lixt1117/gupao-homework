@@ -1,0 +1,22 @@
+CountDownLatch源码分析
+=============================================================================================
+countDownLatch.await:
+
+countDownLatch.await是调用AbstractQueuedSynchronizer的acquireSharedInterruptibly方法,在该方法中：
+1.首先判断线程是否被中断，如果是抛出InterruptedException
+2.调用countDownLatch内部类Sync的tryAcquireShared方法尝试获取共享锁,该方法实际上就是判断锁的状态state是否
+	等于0，而state的数值在countDownLatch初始化时一般就定义好了数值，所以如果没有调用countDown方法把锁释放
+	完全是不会等于0的
+3.根据上一步的返回结果，如果tryAcquireShared成功，则啥也不干，方法返回，线程继续执行。
+	如果tryAcquireShared失败，则调用AQS的doAcquireSharedInterruptibly方法，
+	在该方法中与doAcquireShared方法类似，区别只是在遭遇中断唤醒后会主动抛出InterruptedException。
+	doAcquireShared的解析可参考之前讲重入锁ReentrantLock里对acquireQueued方法的部分
+	PS:这里doAcquireShared和acquireQueued还是有一点区别的，区别在于如果线程被唤醒后获得了共享锁，则
+	会调用AQS的doReleaseShared方法唤醒后续其他线程（毕竟共享锁，自己被唤醒也得把兄弟们唤醒）
+
+到此，countDownLatch.await:解析完成
+=============================================================================================
+countDownLatch.countDown：
+
+countDownLatch.countDown是调用的AQS的releaseShared方法，该方法在解析ReentrantReadWriteLock读锁解锁时
+写过，就不再赘述了
