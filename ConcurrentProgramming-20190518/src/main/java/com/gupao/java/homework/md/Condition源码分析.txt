@@ -1,0 +1,39 @@
+Condition源码分析
+=============================================================================================
+condition.await:
+
+condition.await是调用的AbstractQueuedSynchronizer的内部类ConditionObject的await方法，在该方法中：
+
+1.首先判断当前线程是否被中断，如果被中断抛出InterruptedException
+2.讲当前线程封装成Node，放进wait队列中
+3.调用AQS的fullyRelease方法，当前线程获得的lock的完全释放，并先记录下lock的重入次数state
+4.接下来进入一个while循环中，循环条件是当前线程Node不在同步队列中。循环体中：
+	a.LockSupport.park阻塞当前线程
+	b.如果线程被唤醒，则调用ConditionObject的checkInterruptWhileWaiting方法，该方法是一个两层的三目表达式。
+		（1）如果线程未被中断， 返回0
+			如果线程被中断，则调用AQS的transferAfterCancelledWait方法，该方法返回一个boolean。true的话步骤b返回-1，也就是
+			抛出中断，false的话返回1，也就是重新中断一次
+		（2）在transferAfterCancelledWait方法中：
+			I.首先通过cas将当前node的waitstatus替换为0，替换成功则调用enq方法，将Node加入同步队列中，方法返回true
+			II.如果替换失败，说明在这期间有其他线程调用了condition.signal方法，因为该方法也会做同样的替换。
+				这时候while循环判断Node在不在同步队列中，如果不在则调用Thread.yield，将当前线程让出CPU，重新竞争。
+				（这里是因为需要等待condition.signal执行完它那边的enq方法）
+		（3）退出while后，返回false
+	c.根据上一步返回，如果线程是被中断唤醒，则break出while，如果不是，则继续while，直到signal执行完把Node加入到同步队列中
+5.接着调用AQS的acquireQueued方法加锁，这里会将之前记录的state次数重新赋值上去
+6.最后处理中断的响应，非中断唤醒此步可忽略
+
+=============================================================================================
+condition.signal:
+
+condition.signal是调用的AbstractQueuedSynchronizer的内部类ConditionObject的signal方法，在该方法中：
+
+1.如果调用线程没有获得独占锁，抛出IllegalMonitorStateException
+2.接着调用ConditionObject的doSignal方法，在该方法中：
+	a.首先该方法就是一个do-while循环体，循环的条件是AQS的transferForSignal方法返回false并且wait的队列的第一个
+		Node不为null
+	b.transferForSignal方法是将节点从wait队列转移到同步队列。 如果成功，则返回true。在该方法中：
+		I.通过cas将当前node的waitstatus替换为0，替换成功则调用enq方法，将Node加入同步队列中，如果失败返回false。
+		II.判断同步队列中前一个节点的waitstatus是否大于0（是否为cancelled），如果是则调用LockSupport.unpark唤醒节点线程，
+			如果不是，则尝试cas将waitstatus更新为-1（SIGNAL），更新成功则返回true，更新失败同样唤醒线程。最后都会返回true
+	c.循环体内执行的内容其实就是对wait队列的一个整理，将当前Node的next改成first节点等等

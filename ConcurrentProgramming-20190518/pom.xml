@@ -5,23 +5,10 @@
   <modelVersion>4.0.0</modelVersion>
 
   <groupId>com.gupao.java</groupId>
-  <artifactId>gupao-homework</artifactId>
-  <packaging>pom</packaging>
+  <artifactId>ConcurrentProgramming-20190518</artifactId>
   <version>1.0-SNAPSHOT</version>
-  <modules>
-    <module>factoryPattern-20190306</module>
-      <module>springcore-20190324</module>
-    <module>springcore-20190327</module>
-      <module>springcore-20190330</module>
-      <module>springAOP</module>
-      <module>ConcurrentProgramming-20190508</module>
-      <module>ConcurrentProgramming-20190511</module>
-      <module>ConcurrentProgramming-20190512</module>
-      <module>ConcurrentProgramming-20190515</module>
-      <module>ConcurrentProgramming-20190518</module>
-  </modules>
 
-  <name>gupao-homework</name>
+  <name>ConcurrentProgramming-20190518</name>
   <!-- FIXME change it to the project's website -->
   <url>http://www.example.com</url>
 
