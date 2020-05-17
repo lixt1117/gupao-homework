@@ -1,0 +1,82 @@
+线程池ThreadPoolExecutor源码阅读笔记
+
+构造一个线程池的方法有很多，这里看一下ThreadPoolExecutor参数做多的构造方法：
+public ThreadPoolExecutor(int corePoolSize,--核心线程数
+                              int maximumPoolSize,--最大线程数
+                              long keepAliveTime,--超时时间,超出核心线程数量以外的线程空余存活时间
+                              TimeUnit unit,--存活时间单位
+                              BlockingQueue<Runnable> workQueue,--保存执行任务的队列
+                              ThreadFactory threadFactory,--创建新线程使用的工厂
+                              RejectedExecutionHandler handler)--拒绝策略
+一共7个参数。
+
+下面看入口方法execute：
+1.execute方法参数是一个Runnable实例command，如果command为null会抛出空指针
+2.首先调用workerCountOf方法获取线程池的线程数量，线程池通过一个AtomicInteger的静态变量ctl来记录线程数量和线程池状态，
+	ctl的高 3 位来保存运行状态，低 29 位来保存线程数量。
+3.如果此时线程数量小于核心线程数，则调用addWorker方法创建一个核心线程来执行，如果创建成功则方法结束
+4.如果数量大于等于核心线程数或者之前创建核心线程失败，则做以下判断：
+	线程池是否时RUNNNING状态以及尝试向线程池的工作队列添加任务成功
+	（1）如果是，则此时任务已经添加进了工作队列中，但有可能线程池已经被外部关闭，所以需要再判断一个线程池
+		的状态是在运行且尝试移除任务成功，如果是运行状态或者线程池关闭但是任务队列移除失败再判断线程中线程数量是否等于0（
+		因为通过allowCoreThreadTimeOut方法核心线程也有可能被销毁），
+			如果等于0，用addWorker添加一个空的任务去执行队列中的任务。如果不是0，则方法结束。
+		如果线程不是在运行且任务移除成功，直接调用reject方法拒绝。
+	（2）如果不是，说明需要创建临时线程，一样调用addWorker创建，创建成功方法结束，创建失败调用reject拒绝。
+5.关于addWorker方法：
+	（1）两个参数，Runnable firstTask和boolean core，分别代表线程创建后立即执行的任务和创建的线程是否是核心线程。
+	（2）addWorker首先是一个for自旋，由于这个自旋内部还有一个自旋，我们就把第一个外层的叫做A，内部叫做B。
+		I.首先判读线程池状态，
+			一. 线程池已经 shutdown 后，还要添加新的任务，拒绝
+			二. (第二个判断)SHUTDOWN 状态不接受新任务，但仍然会执行已经加入任务队列的任务，所以当进入 SHUTDOWN 状态，而传进来的任务为空，并且任务队列不为空的时候，是允许添加新线程的.
+			如果判断不能添加线程，返回false
+		II.接下来是第二个自旋B，主要做这些事：
+			一.如果线程数量大于等于默认的线程容量CAPACITY或者大于指定的容量，则返回false
+			二.接着使用cas方法是将线程数递增，如果成功直接跳出循环A。
+			   如果失败，判断线程池状态是否发生变化，没有变化则继续循环B，变化了继续循环A。
+		III.自旋结束后，开始要创建一个worker线程来执行任务了：
+			一.将要执行的任务封装成一个Worker对象，该对象内部有一个Thread属性，它就是要创建的线程。
+			二.线程创建成功后，首先会添加一个重入锁锁住线程池，避免并发问题。
+				然后尝试将创建的worker加入到一个HashSet里面，它是用来存储线程池的线程的。
+			三.worker成创建成功后，调用Thread.start方法启动线程，其实就是调用了Worker的run方法，也就是runWorker方法。
+6.关于runWorker方法：
+	首先说一下Worker这个类，它实现了Runnable接口并且继承了AQS，所以它既有线程功能，又有锁的功能。
+	但是它和ReentrantLock不一样，它是不可重入的锁。因为线程池不光有execute方法，还有其他一些如 setCorePoolSize这种
+	线程数控制的方法，该方法里面也会尝试中断worker任务，它也是要获取锁的，如果重入了，那么在任务内部如果调用了这种方法
+	会中断正在执行任务的线程。
+	接着说方法：
+	（1）首先调用worker的unlock方法，这里先借锁的原因是为了允许别的地方中断。因为worker初始化的时候把锁的
+	state设置为了-1，这是为了只允许在runworker的时候被中断，其他时候不会被中断。
+	（2）接下来是个while循环，当创建时传入的任务不为null或者通过getTask方法从队列拿到了任务时，就会一直循环下去。
+		在循环中：
+		I.首先加锁，不是为了防止并发执行任务，为了在shutdown()时不终止正在运行的 worker
+		II.线程池为 stop 状态时不接受新任务，不执行已经加入任务队列的任务，还中断正在执行的任务
+		III.接着调用获得任务的run方法，这里线程池在执行run的前后调用了beforeExecute和afterExecute方法，它们默认是
+			空的，是为了给开发者自己实现，来监控任务的执行情况。
+		IV.执行完成后对当前worker线程完成任务数量completedTasks++
+		V.解锁
+	（3）循环完毕就代表这个线程没事干了，就调用processWorkerExit方法然后退出，在processWorkerExit方法中
+		主要两件事：
+			1.将入参 worker 从数组 workers 里删除掉;
+			2.根据布尔值 allowCoreThreadTimeOut 来决定是否补充新的 Worker 进数组 workers
+7.关于getTask方法
+	该方法并不是单纯的从队列中获取任务，在线程池中，空闲超过一定时间的线程是有可能被销毁的。那么这个如果判断一个
+	线程的空闲时间是否达到要求，就是在该方法完成的。
+	在该方法中其实就是一个自旋：
+	在自旋中它会去判断是否当前是否需要销毁线程，如果需要，它从队列中拿到任务的方法就是take，一个非阻塞方法，拿不到就返回null了。
+	如果不需要，那么就是调用poll方法，一个阻塞方法，队列中拿不到任务就会阻塞线程，这样当前线程就不会被回收了。
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
